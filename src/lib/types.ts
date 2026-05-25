@@ -7,6 +7,7 @@ export interface Citation {
   volume: number | null;
   page: number;
   court: string | null;
+  canonical?: string;
 }
 
 export interface HallucinationFlag {

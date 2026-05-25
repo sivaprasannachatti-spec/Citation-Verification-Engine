@@ -34,6 +34,10 @@ const DEFAULT_MAPPINGS: SectionMapping[] = [
   { id: 30, old_section: 'Section 65B IEA', new_section: 'Section 63 BSA', old_act: 'Indian Evidence Act', new_act: 'Bharatiya Sakshya Adhiniyam' },
 ];
 
+export const normalizeKey = (key: string): string => {
+  return key.toUpperCase().replace(/[^0-9A-Z()]/g, '');
+};
+
 async function loadMappings(): Promise<SectionMapping[]> {
   try {
     const { data, error } = await supabase
@@ -55,7 +59,6 @@ interface LookupEntry {
 
 function buildLookup(mappings: SectionMapping[]): Map<string, Map<string, LookupEntry>> {
   const lookup = new Map<string, Map<string, LookupEntry>>();
-  // Initialize act groups
   lookup.set('IPC', new Map());
   lookup.set('CrPC', new Map());
   lookup.set('IEA', new Map());
@@ -73,13 +76,15 @@ function buildLookup(mappings: SectionMapping[]): Map<string, Map<string, Lookup
     const actKey = actAlias[m.old_act.toLowerCase()] || 'IPC';
     const secMatch = m.old_section.match(/Section\s+([\dA-Za-z()]+)/i);
     if (!secMatch) continue;
+    
     const secNum = secMatch[1];
+    const normSecNum = normalizeKey(secNum);
 
     const newSecMatch = m.new_section.match(/Section\s+([\dA-Za-z()]+)/i);
     if (!newSecMatch) continue;
 
     if (!lookup.has(actKey)) lookup.set(actKey, new Map());
-    lookup.get(actKey)!.set(secNum, {
+    lookup.get(actKey)!.set(normSecNum, {
       newSection: newSecMatch[1],
       oldAct: m.old_act,
       newAct: m.new_act,
@@ -89,13 +94,22 @@ function buildLookup(mappings: SectionMapping[]): Map<string, Map<string, Lookup
   return lookup;
 }
 
+interface ReplacementPlan {
+  start: number;
+  end: number;
+  oldText: string;
+  newText: string;
+  oldAct: string;
+  newAct: string;
+}
+
 export async function normalizeSections(text: string): Promise<NormalizationResult> {
   if (!text) return { original_text: '', normalized_text: '', replacements: [] };
 
   const mappings = await loadMappings();
   const lookup = buildLookup(mappings);
-  const replacements: Replacement[] = [];
-  let normalizedText = text;
+  const rawReplacements: Replacement[] = [];
+  const plans: ReplacementPlan[] = [];
 
   const actNames: Record<string, string> = {
     'indian penal code': 'IPC',
@@ -112,27 +126,41 @@ export async function normalizeSections(text: string): Promise<NormalizationResu
     'IEA': 'BSA',
   };
 
-  // Pattern to match "Section(s) <numbers> <act>" and "Section(s) <numbers> of the <full act name>"
-  const pattern = /\b(Sections?)\s+([\d\w(),\s&]+?)\s+(?:of\s+the\s+|of\s+|under\s+)?(Indian\s+Penal\s+Code|IPC|Code\s+of\s+Criminal\s+Procedure|CrPC|Indian\s+Evidence\s+Act|IEA)\b/gi;
+  // Regular expression to match section references dynamically.
+  // Handles: bare "420 IPC", "Section 420 IPC", "Sections 420, 406 IPC", "u/s 420 IPC", and optional enactment years.
+  const pattern = /\b(?:(?:Sections?|u\/s)\s+)?((?:\d+[-_]?[A-Za-z]*(?:\(\d+\))?)(?:\s*(?:,\s*|\band\b\s*|&|\bor\b\s*)\s*(?:\d+[-_]?[A-Za-z]*(?:\(\d+\))?))*)\s+(?:of\s+the\s+|of\s+|under\s+)?(Indian\s+Penal\s+Code|IPC|Code\s+of\s+Criminal\s+Procedure|CrPC|Indian\s+Evidence\s+Act|IEA)(?:\s*,\s*(1860|1973|1872))?\b/gi;
 
-  normalizedText = normalizedText.replace(pattern, (fullMatch, prefix, sectionsStr, actName) => {
+  let match;
+  pattern.lastIndex = 0;
+
+  while ((match = pattern.exec(text)) !== null) {
+    const fullMatch = match[0];
+    const sectionsStr = match[1];
+    const actName = match[2];
+    const yearMatched = match[3];
+
     const actKey = actNames[actName.toLowerCase()] || 'IPC';
     const actLookup = lookup.get(actKey);
-    if (!actLookup) return fullMatch;
+    if (!actLookup) continue;
 
-    const parts = sectionsStr.split(/,|\band\b|&/);
+    // Split compound sections safely by commas, 'and', 'or', and '&'
+    const parts = sectionsStr.split(/,|\band\b|&|\bor\b/gi);
     const normalizedParts: string[] = [];
     let replacedAny = false;
 
     for (const part of parts) {
       const trimmed = part.trim();
       if (!trimmed) continue;
-      const secMatch = trimmed.match(/\b(\d+[A-Z]?(?:\(\d+\))?)\b/i);
+
+      // Extract section code supporting alpha, hyphens, and parenthesized subsections
+      const secMatch = trimmed.match(/\b(\d+[-_]?[A-Z]?(?:\(\d+\))?)(?!\w)/i);
       if (secMatch) {
         const secCode = secMatch[1];
-        const entry = actLookup.get(secCode);
+        const normKey = normalizeKey(secCode);
+        const entry = actLookup.get(normKey);
+
         if (entry) {
-          replacements.push({
+          rawReplacements.push({
             old_text: `Section ${secCode} ${actKey}`,
             new_text: `Section ${entry.newSection} ${newActAbbr[actKey]}`,
             old_act: entry.oldAct,
@@ -148,20 +176,59 @@ export async function normalizeSections(text: string): Promise<NormalizationResu
       }
     }
 
-    if (!replacedAny) return fullMatch;
+    if (replacedAny) {
+      const newActName = newActAbbr[actKey] || actKey;
+      const joined =
+        normalizedParts.length > 1
+          ? normalizedParts.slice(0, -1).join(', ') + ' and ' + normalizedParts[normalizedParts.length - 1]
+          : normalizedParts[0];
 
-    const newActName = newActAbbr[actKey] || actKey;
-    const joined =
-      normalizedParts.length > 1
-        ? normalizedParts.slice(0, -1).join(', ') + ' and ' + normalizedParts[normalizedParts.length - 1]
-        : normalizedParts[0];
-    const newPrefix = normalizedParts.length === 1 ? 'Section' : 'Sections';
-    return `${newPrefix} ${joined} ${newActName}`;
-  });
+      // Rebuild matching prefix formatting (u/s vs Section/Sections)
+      let prefixWord = 'Section';
+      if (fullMatch.toLowerCase().startsWith('u/s')) {
+        prefixWord = 'u/s';
+      } else if (normalizedParts.length > 1) {
+        prefixWord = 'Sections';
+      }
+
+      // Enactment years are stripped in production-grade output
+      const newText = `${prefixWord} ${joined} ${newActName}`;
+      
+      plans.push({
+        start: match.index,
+        end: match.index + fullMatch.length,
+        oldText: fullMatch,
+        newText,
+        oldAct: actKey,
+        newAct: newActName,
+      });
+    }
+  }
+
+  // Execute positional replacements from last to first to guarantee index safety
+  let normalizedText = text;
+  plans.sort((a, b) => b.start - a.start);
+  for (const plan of plans) {
+    normalizedText =
+      normalizedText.substring(0, plan.start) +
+      plan.newText +
+      normalizedText.substring(plan.end);
+  }
+
+  // Deduplicate mapping replacements for visual summary rendering
+  const seen = new Set<string>();
+  const uniqueReplacements: Replacement[] = [];
+  for (const r of rawReplacements) {
+    const key = `${r.old_text}->${r.new_text}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueReplacements.push(r);
+    }
+  }
 
   return {
     original_text: text,
     normalized_text: normalizedText,
-    replacements,
+    replacements: uniqueReplacements,
   };
 }

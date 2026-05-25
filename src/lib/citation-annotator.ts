@@ -1,5 +1,13 @@
 import { VerificationResult, NormalizationResult, CitationReport } from './types';
 
+interface CitationOccurrence {
+  start: number;
+  end: number;
+  origText: string;
+  badge: string;
+  length: number;
+}
+
 export function annotateTextAndReport(
   text: string,
   verifications: VerificationResult[],
@@ -7,43 +15,95 @@ export function annotateTextAndReport(
   apiCallsMade: number,
   apiCostInr: number
 ): { annotatedText: string; report: CitationReport } {
-  let annotatedText = normalization.normalized_text;
+  const normalizedText = normalization.normalized_text;
   let verified = 0;
   let corrected = 0;
   let unverified = 0;
   let removed = 0;
 
+  // 1. Calculate unique verification stats
   for (const v of verifications) {
-    const orig = v.citation.text;
-    let badge = '';
-
     if (v.status === 'VERIFIED') {
       if (v.corrected_text) {
         corrected++;
+      } else {
+        verified++;
+      }
+    } else if (v.status === 'NOT_FOUND') {
+      removed++;
+    } else {
+      unverified++;
+    }
+  }
+
+  // 2. Identify all positional occurrences of all citations in normalizedText
+  const occurrences: CitationOccurrence[] = [];
+
+  for (const v of verifications) {
+    const orig = v.citation.text;
+    const escaped = orig.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const regex = new RegExp(escaped, 'g');
+
+    // Build the clean badge representation
+    let badge = '';
+    if (v.status === 'VERIFIED') {
+      if (v.corrected_text) {
         const link = v.ik_doc_id ? `https://indiankanoon.org/doc/${v.ik_doc_id}/` : null;
         badge = link
           ? `${v.corrected_text} [⚠️ CORRECTED] [✅ VERIFIED - [${v.case_name}](${link})]`
           : `${v.corrected_text} [⚠️ CORRECTED] [✅ VERIFIED - ${v.case_name}]`;
       } else {
-        verified++;
         const link = v.ik_doc_id ? `https://indiankanoon.org/doc/${v.ik_doc_id}/` : null;
         badge = link
           ? `${orig} [✅ VERIFIED - [${v.case_name}](${link})]`
           : `${orig} [✅ VERIFIED - ${v.case_name}]`;
       }
     } else if (v.status === 'NOT_FOUND') {
-      removed++;
       const hasError = v.hallucination_flags.some((f) => f.severity === 'ERROR');
       const reason = hasError ? 'Hallucinated' : 'Fabricated';
       badge = `[❌ REMOVED - ${reason}: ${orig}]`;
     } else {
-      unverified++;
       badge = `${orig} [⚠️ UNVERIFIED]`;
     }
 
-    if (annotatedText.includes(orig)) {
-      annotatedText = annotatedText.replace(orig, badge);
+    let match;
+    regex.lastIndex = 0;
+    while ((match = regex.exec(normalizedText)) !== null) {
+      occurrences.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        origText: match[0],
+        badge,
+        length: match[0].length,
+      });
     }
+  }
+
+  // 3. Resolve overlapping matches by filtering from longest to shortest
+  occurrences.sort((a, b) => b.length - a.length);
+  const validOccurrences: CitationOccurrence[] = [];
+
+  for (const occ of occurrences) {
+    let hasOverlap = false;
+    for (const valid of validOccurrences) {
+      if (occ.start < valid.end && valid.start < occ.end) {
+        hasOverlap = true;
+        break;
+      }
+    }
+    if (!hasOverlap) {
+      validOccurrences.push(occ);
+    }
+  }
+
+  // 4. Apply replacements from last to first in the text to guarantee index safety
+  let annotatedText = normalizedText;
+  validOccurrences.sort((a, b) => b.start - a.start);
+  for (const occ of validOccurrences) {
+    annotatedText =
+      annotatedText.substring(0, occ.start) +
+      occ.badge +
+      annotatedText.substring(occ.end);
   }
 
   const total = verifications.length;

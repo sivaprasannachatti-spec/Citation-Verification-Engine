@@ -1,7 +1,6 @@
 import { supabase } from './supabase';
 import { Citation, CitationPattern } from './types';
 
-// Hardcoded fallback patterns (loaded from DB at runtime, these are backup)
 const DEFAULT_PATTERNS: CitationPattern[] = [
   {
     id: 1,
@@ -66,47 +65,68 @@ async function loadPatterns(): Promise<CitationPattern[]> {
   return DEFAULT_PATTERNS;
 }
 
-function parseCitation(match: RegExpMatchArray, patternName: string): Citation | null {
+function buildCanonical(c: Omit<Citation, 'text'>): string {
+  switch (c.pattern_name) {
+    case 'SCC':
+      return `(${c.year}) ${c.volume} SCC ${c.page}`;
+    case 'SCC_OnLine':
+      return `${c.year} SCC OnLine ${c.court} ${c.page}`;
+    case 'AIR':
+      return `AIR ${c.year} ${c.court} ${c.page}`;
+    case 'Cri_LJ':
+      return `${c.year} Cri LJ ${c.page}`;
+    case 'SCR':
+      return `(${c.year}) ${c.volume} SCR ${c.page}`;
+    case 'MANU':
+      return `MANU/${c.court?.toUpperCase()}/${c.year}/${c.page}`;
+    default:
+      return '';
+  }
+}
+
+function parseCitation(match: RegExpExecArray, patternName: string): Citation | null {
   try {
     const fullText = match[0];
+    let parsed: Omit<Citation, 'text'> | null = null;
+
     switch (patternName) {
       case 'SCC':
       case 'SCR':
-        return {
-          text: fullText,
+        parsed = {
           pattern_name: patternName,
           year: parseInt(match[1]),
           volume: parseInt(match[2]),
           page: parseInt(match[3]),
           court: patternName === 'SCR' ? 'SC' : null,
         };
+        break;
       case 'SCC_OnLine':
-        return {
-          text: fullText,
+        parsed = {
           pattern_name: patternName,
           year: parseInt(match[1]),
           volume: null,
           page: parseInt(match[3]),
           court: match[2],
         };
+        break;
       case 'AIR':
-        return {
-          text: fullText,
+        parsed = {
           pattern_name: patternName,
           year: parseInt(match[1]),
           volume: null,
           page: parseInt(match[3]),
           court: match[2],
         };
+        break;
       case 'Cri_LJ':
-        return {
-          text: fullText,
+        parsed = {
           pattern_name: patternName,
           year: parseInt(match[1]),
           volume: null,
           page: parseInt(match[2]),
           court: null,
         };
+        break;
       case 'MANU': {
         const court = match[1];
         const val1 = parseInt(match[2]);
@@ -119,18 +139,26 @@ function parseCitation(match: RegExpMatchArray, patternName: string): Citation |
           year = val2;
           page = val1;
         }
-        return {
-          text: fullText,
+        parsed = {
           pattern_name: patternName,
           year,
           volume: null,
           page,
           court,
         };
+        break;
       }
-      default:
-        return null;
     }
+
+    if (parsed) {
+      const canonical = buildCanonical(parsed);
+      return {
+        text: fullText,
+        canonical,
+        ...parsed,
+      };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -147,10 +175,17 @@ export async function extractCitations(text: string): Promise<Citation[]> {
     const regex = new RegExp(pat.regex, 'gi');
     let match: RegExpExecArray | null;
     while ((match = regex.exec(text)) !== null) {
-      if (seen.has(match[0])) continue;
-      seen.add(match[0]);
+      const matchedString = match[0];
+
+      // Trim any wrapping punctuation, parentheses, brackets, or quotes
+      const cleanText = matchedString.replace(/^[\s"'\(\[,\.]+/, '').replace(/[\s"'\)\]\.,]+$/, '');
+      if (seen.has(cleanText)) continue;
+      seen.add(cleanText);
+
       const citation = parseCitation(match, pat.pattern_name);
-      if (citation) extracted.push(citation);
+      if (citation) {
+        extracted.push(citation);
+      }
     }
   }
 

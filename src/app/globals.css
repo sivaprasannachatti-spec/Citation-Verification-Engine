@@ -1,21 +1,22 @@
 @import "tailwindcss";
 
 :root {
-  --background: #000000;
+  --background: #030303;
   --foreground: #f4f4f5;
 }
 
 body {
-  background: #000000;
+  background: #030303;
   color: #f4f4f5;
   margin: 0;
   padding: 0;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
 /* Custom scrollbars for verified output scroll lists */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -23,11 +24,50 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: rgba(39, 39, 42, 0.6);
   border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: rgba(63, 63, 70, 0.8);
 }
+
+/* Premium micro-interactions and glowing borders */
+@keyframes borderGlow {
+  0%, 100% {
+    border-color: rgba(99, 102, 241, 0.2);
+  }
+  50% {
+    border-color: rgba(99, 102, 241, 0.5);
+  }
+}
+
+.animate-border-glow {
+  animation: borderGlow 4s infinite ease-in-out;
+}
+
+/* Custom shadow utilities for premium SaaS look */
+.shadow-premium-soft {
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.shadow-premium-glow {
+  box-shadow: 0 0 40px rgba(99, 102, 241, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.shadow-emerald-glow {
+  box-shadow: 0 0 35px rgba(16, 185, 129, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.shadow-amber-glow {
+  box-shadow: 0 0 35px rgba(245, 158, 11, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass-panel {
+  background: rgba(9, 9, 11, 0.4);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 
