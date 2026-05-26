@@ -107,12 +107,21 @@ export function annotateTextAndReport(
   }
 
   const total = verifications.length;
-  const accuracy_pct = total > 0 ? Math.round(((verified + corrected) / total) * 1000) / 10 : 100;
+  const normalized_sections = normalization.replacements.length;
+  const total_entities = total + normalized_sections;
+  
+  // Accuracy combines correctly verified/corrected citations PLUS correctly normalized sections
+  // If there are no entities processed, accuracy is explicitly 0 (not 100%)
+  const accuracy_pct = total_entities > 0 
+    ? Math.round(((verified + corrected + normalized_sections) / total_entities) * 1000) / 10 
+    : 0;
 
   return {
     annotatedText,
     report: {
       total,
+      total_entities,
+      normalized_sections,
       verified,
       corrected,
       unverified,

@@ -41,13 +41,15 @@ export const VerificationReport: React.FC<VerificationReportProps> = ({ report, 
     );
   }
 
-  const getGaugeColor = (pct: number) => {
+  const getGaugeColor = (pct: number, total: number) => {
+    if (total === 0) return 'stroke-zinc-700';
     if (pct >= 90) return 'stroke-emerald-500';
     if (pct >= 70) return 'stroke-amber-500';
     return 'stroke-red-500';
   };
 
-  const getAccuracyGlow = (pct: number) => {
+  const getAccuracyGlow = (pct: number, total: number) => {
+    if (total === 0) return '';
     if (pct >= 90) return 'shadow-emerald-glow';
     if (pct >= 70) return 'shadow-amber-glow';
     return 'shadow-red-glow';
@@ -65,7 +67,7 @@ export const VerificationReport: React.FC<VerificationReportProps> = ({ report, 
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
           {/* Accuracy Ring Gauge */}
-          <div className={`flex flex-col items-center justify-center bg-zinc-900/10 border border-zinc-900/60 rounded-2xl p-4 relative ${getAccuracyGlow(report.accuracy_pct)}`}>
+          <div className={`flex flex-col items-center justify-center bg-zinc-900/10 border border-zinc-900/60 rounded-2xl p-4 relative ${getAccuracyGlow(report.accuracy_pct, report.total_entities)}`}>
             <div className="relative w-20 h-20 flex items-center justify-center">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                 <circle
@@ -80,7 +82,7 @@ export const VerificationReport: React.FC<VerificationReportProps> = ({ report, 
                   cx="50"
                   cy="50"
                   r="42"
-                  className={`${getGaugeColor(report.accuracy_pct)} transition-all duration-1000 ease-out`}
+                  className={`${getGaugeColor(report.accuracy_pct, report.total_entities)} transition-all duration-1000 ease-out`}
                   strokeWidth="8"
                   fill="transparent"
                   strokeDasharray={`${2 * Math.PI * 42}`}
@@ -111,7 +113,7 @@ export const VerificationReport: React.FC<VerificationReportProps> = ({ report, 
                 Pipeline Stats
               </span>
               <span className="text-zinc-400 font-mono font-bold">
-                {report.total} Citations
+                {report.total_entities} Entities
               </span>
             </div>
 
@@ -121,6 +123,14 @@ export const VerificationReport: React.FC<VerificationReportProps> = ({ report, 
                 Verified Cases
               </span>
               <span className="font-mono text-zinc-200 font-semibold">{report.verified}</span>
+            </div>
+
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-zinc-400 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                Normalized Sections
+              </span>
+              <span className="font-mono text-zinc-200 font-semibold">{report.normalized_sections}</span>
             </div>
 
             <div className="flex justify-between items-center text-xs">

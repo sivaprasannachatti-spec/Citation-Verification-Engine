@@ -41,6 +41,8 @@ export interface NormalizationResult {
 
 export interface CitationReport {
   total: number;
+  total_entities: number;
+  normalized_sections: number;
   verified: number;
   corrected: number;
   unverified: number;

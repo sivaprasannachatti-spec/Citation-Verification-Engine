@@ -84,6 +84,7 @@ async function verifyViaIndianKanoon(
     const searchQuery = citation.canonical || citation.text;
     const url = `https://api.indiankanoon.org/search/?formInput=${encodeURIComponent(searchQuery)}&pagenum=0`;
     const res = await fetch(url, {
+      method: 'POST',
       headers: {
         Authorization: `Token ${apiKey}`,
         Accept: 'application/json',
@@ -99,43 +100,178 @@ async function verifyViaIndianKanoon(
     const data = await res.json();
     const docs = data.docs || [];
 
-    if (docs.length > 0) {
-      const top = docs[0];
-      const title = top.title || 'Unknown';
-      const tid = String(top.tid || '');
-
-      // Check for page number mismatch corrections in SCC / SCR citation formats
-      let corrected_text: string | null = null;
-      if (citation.pattern_name === 'SCC') {
-        const m = title.match(/\((\d{4})\)\s+(\d{1,2})\s+SCC\s+(\d{1,5})/i);
-        if (m) {
-          const tYear = parseInt(m[1]);
-          const tVol = parseInt(m[2]);
-          const tPage = parseInt(m[3]);
-          if (tYear === citation.year && tVol === citation.volume && tPage !== citation.page) {
-            corrected_text = `(${tYear}) ${tVol} SCC ${tPage}`;
-          }
-        }
-      } else if (citation.pattern_name === 'SCR') {
-        const m = title.match(/\((\d{4})\)\s+(\d{1,2})\s+SCR\s+(\d{1,5})/i);
-        if (m) {
-          const tYear = parseInt(m[1]);
-          const tVol = parseInt(m[2]);
-          const tPage = parseInt(m[3]);
-          if (tYear === citation.year && tVol === citation.volume && tPage !== citation.page) {
-            corrected_text = `(${tYear}) ${tVol} SCR ${tPage}`;
-          }
-        }
-      }
-
-      // If the page is corrected, it represents a CORRECTED status rather than just VERIFIED
-      return { status: 'VERIFIED', ik_doc_id: tid, case_name: title, corrected_text };
+    if (docs.length === 0) {
+      return { status: 'NOT_FOUND', ik_doc_id: null, case_name: null, corrected_text: null };
     }
 
-    return { status: 'NOT_FOUND', ik_doc_id: null, case_name: null, corrected_text: null };
+    // CRITICAL: IK is a general text search engine. Searching for a fabricated
+    // citation like "(2023) 4 SCC 789" will STILL return results (just unrelated ones).
+    // We MUST validate that the returned results actually contain the citation pattern
+    // in their title or headline. Otherwise fabricated citations silently pass as VERIFIED.
+
+    const validationResult = validateIKResults(citation, docs);
+    return validationResult;
   } catch (e) {
     console.error('IK API call failed:', e);
     return { status: 'UNVERIFIED', ik_doc_id: null, case_name: null, corrected_text: null };
+  }
+}
+
+/**
+ * Strip HTML bold tags that IK injects into headlines for search highlighting.
+ */
+function stripHtml(str: string): string {
+  return str.replace(/<\/?b>/gi, '').replace(/<[^>]*>/g, '');
+}
+
+/**
+ * Validates IK search results against the extracted citation to determine
+ * VERIFIED, CORRECTED, or NOT_FOUND status. Scans ALL returned docs.
+ *
+ * For SCC/SCR: checks headline for (year) volume SCC/SCR page pattern
+ * For Cri_LJ: checks headline for year Cri LJ page pattern
+ * For AIR: checks headline for AIR year court page pattern
+ * For SCC_OnLine: checks headline for year SCC OnLine court page pattern
+ * For MANU: checks headline for MANU/court/year/page pattern
+ */
+function validateIKResults(
+  citation: Citation,
+  docs: Array<{ tid?: number; title?: string; headline?: string }>
+): {
+  status: string;
+  ik_doc_id: string | null;
+  case_name: string | null;
+  corrected_text: string | null;
+} {
+  // Build format-specific regex patterns for validation
+  const { exactPattern, correctionExtractor } = buildValidationPatterns(citation);
+
+  if (!exactPattern) {
+    // For pattern types we don't have specific validation for,
+    // fall back to checking if the top result seems relevant (non-zero citations)
+    const top = docs[0];
+    const tid = String(top.tid || '');
+    const title = top.title || 'Unknown';
+    return { status: 'VERIFIED', ik_doc_id: tid, case_name: stripHtml(title), corrected_text: null };
+  }
+
+  // Pass 1: Check ALL docs for an EXACT citation match
+  for (const doc of docs) {
+    const searchable = stripHtml(`${doc.title || ''} ${doc.headline || ''}`);
+    if (exactPattern.test(searchable)) {
+      const tid = String(doc.tid || '');
+      const title = doc.title || 'Unknown';
+      return { status: 'VERIFIED', ik_doc_id: tid, case_name: stripHtml(title), corrected_text: null };
+    }
+  }
+
+  // Pass 2: Check ALL docs for a CORRECTABLE match (same year/volume, different page)
+  if (correctionExtractor) {
+    for (const doc of docs) {
+      const searchable = stripHtml(`${doc.title || ''} ${doc.headline || ''}`);
+      const corrMatch = correctionExtractor.exec(searchable);
+      correctionExtractor.lastIndex = 0; // Reset for next doc
+      if (corrMatch) {
+        const tid = String(doc.tid || '');
+        const title = doc.title || 'Unknown';
+        const correctedText = buildCorrectedText(citation, corrMatch);
+        if (correctedText) {
+          return { status: 'VERIFIED', ik_doc_id: tid, case_name: stripHtml(title), corrected_text: correctedText };
+        }
+      }
+    }
+  }
+
+  // Pass 3: No match found across all docs → citation is fabricated
+  console.log(`  ❌ NOT_FOUND: No IK result matched citation "${citation.canonical || citation.text}"`);
+  return { status: 'NOT_FOUND', ik_doc_id: null, case_name: null, corrected_text: null };
+}
+
+/**
+ * Builds validation regex patterns specific to each citation format.
+ * Returns:
+ *   - exactPattern: regex that matches the EXACT citation in IK text
+ *   - correctionExtractor: regex that matches same year/volume but captures the page for correction
+ */
+function buildValidationPatterns(citation: Citation): {
+  exactPattern: RegExp | null;
+  correctionExtractor: RegExp | null;
+} {
+  const y = citation.year;
+  const v = citation.volume;
+  const p = citation.page;
+
+  switch (citation.pattern_name) {
+    case 'SCC': {
+      // Exact: (2020) 5 SCC 1  — may appear as "2020 SCC (5) 1" or "(2020) 5 SCC 1" in IK
+      const exact = new RegExp(
+        `(?:\\(?${y}\\)?\\s+${v}\\s+SCC\\s+${p}\\b|${y}\\s+SCC\\s*\\(?${v}\\)?\\s+${p}\\b)`,
+        'i'
+      );
+      // Correction: same year & volume, any page
+      const correction = new RegExp(
+        `(?:\\(?${y}\\)?\\s+${v}\\s+SCC\\s+(\\d{1,5})\\b|${y}\\s+SCC\\s*\\(?${v}\\)?\\s+(\\d{1,5})\\b)`,
+        'i'
+      );
+      return { exactPattern: exact, correctionExtractor: correction };
+    }
+    case 'SCR': {
+      const exact = new RegExp(`\\(?${y}\\)?\\s+${v}\\s+SCR\\s+${p}\\b`, 'i');
+      const correction = new RegExp(`\\(?${y}\\)?\\s+${v}\\s+SCR\\s+(\\d{1,5})\\b`, 'i');
+      return { exactPattern: exact, correctionExtractor: correction };
+    }
+    case 'Cri_LJ': {
+      const exact = new RegExp(`${y}\\s+Cri\\s*\\.?\\s*L\\.?\\s*J\\.?\\s+${p}\\b`, 'i');
+      const correction = new RegExp(`${y}\\s+Cri\\s*\\.?\\s*L\\.?\\s*J\\.?\\s+(\\d{1,5})\\b`, 'i');
+      return { exactPattern: exact, correctionExtractor: correction };
+    }
+    case 'AIR': {
+      const court = citation.court || '\\w+';
+      const exact = new RegExp(`AIR\\s+${y}\\s+${court}\\s+${p}\\b`, 'i');
+      const correction = new RegExp(`AIR\\s+${y}\\s+${court}\\s+(\\d{1,5})\\b`, 'i');
+      return { exactPattern: exact, correctionExtractor: correction };
+    }
+    case 'SCC_OnLine': {
+      const court = citation.court || '\\w+';
+      const exact = new RegExp(`${y}\\s+SCC\\s+OnLine\\s+${court}\\s+${p}\\b`, 'i');
+      const correction = new RegExp(`${y}\\s+SCC\\s+OnLine\\s+${court}\\s+(\\d{1,6})\\b`, 'i');
+      return { exactPattern: exact, correctionExtractor: correction };
+    }
+    case 'MANU': {
+      const court = citation.court || '\\w+';
+      const exact = new RegExp(`MANU\\/${court}\\/${y}\\/${String(p).padStart(4, '0')}`, 'i');
+      return { exactPattern: exact, correctionExtractor: null };
+    }
+    default:
+      return { exactPattern: null, correctionExtractor: null };
+  }
+}
+
+/**
+ * Builds corrected citation text from a correction match.
+ * Only returns a correction if the matched page is DIFFERENT from the original.
+ */
+function buildCorrectedText(
+  citation: Citation,
+  corrMatch: RegExpExecArray
+): string | null {
+  // The captured page is in group 1 or group 2 (SCC has two alternation groups)
+  const matchedPage = parseInt(corrMatch[1] || corrMatch[2]);
+  if (isNaN(matchedPage) || matchedPage === citation.page) return null;
+
+  switch (citation.pattern_name) {
+    case 'SCC':
+      return `(${citation.year}) ${citation.volume} SCC ${matchedPage}`;
+    case 'SCR':
+      return `(${citation.year}) ${citation.volume} SCR ${matchedPage}`;
+    case 'Cri_LJ':
+      return `${citation.year} Cri LJ ${matchedPage}`;
+    case 'AIR':
+      return `AIR ${citation.year} ${citation.court} ${matchedPage}`;
+    case 'SCC_OnLine':
+      return `${citation.year} SCC OnLine ${citation.court} ${matchedPage}`;
+    default:
+      return null;
   }
 }
 
