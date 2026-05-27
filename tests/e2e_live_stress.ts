@@ -37,9 +37,9 @@ async function runE2ELiveStress() {
   }
 
   // Verify that malformed citations were correctly extracted and canonicalized
-  const mcaMehta = citations.find(c => c.canonical.includes('1987') && c.canonical.includes('SCC'));
-  const worldTanker = citations.find(c => c.canonical.includes('1998') && c.canonical.includes('SCC'));
-  const umadevi = citations.find(c => c.canonical.includes('2006') && c.canonical.includes('SCC'));
+  const mcaMehta = citations.find(c => c.canonical?.includes('1987') && c.canonical?.includes('SCC'));
+  const worldTanker = citations.find(c => c.canonical?.includes('1998') && c.canonical?.includes('SCC'));
+  const umadevi = citations.find(c => c.canonical?.includes('2006') && c.canonical?.includes('SCC'));
 
   if (!mcaMehta || !worldTanker || !umadevi) {
     throw new Error('Failed to extract one of the malformed or unseen domain citations.');
@@ -100,10 +100,13 @@ async function runE2ELiveStress() {
           reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
         }, 3000); // 3 seconds delay
         
-        options.signal.addEventListener('abort', () => {
-          clearTimeout(timeoutId);
-          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
-        });
+        const signal = options?.signal;
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            clearTimeout(timeoutId);
+            reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+          });
+        }
       });
     }
     return originalFetch(url, options);
@@ -122,7 +125,7 @@ async function runE2ELiveStress() {
     if (timeoutRes.status !== 'UNVERIFIED') {
       throw new Error(`Expected UNVERIFIED status under timeout condition, got: ${timeoutRes.status}`);
     }
-    if (!timeoutRes.reasoning.includes('timed out') && !timeoutRes.reasoning.includes('degraded')) {
+    if (!timeoutRes.reasoning?.includes('timed out') && !timeoutRes.reasoning?.includes('degraded')) {
       throw new Error(`Expected timeout reasoning in verifier logs, got: "${timeoutRes.reasoning}"`);
     }
     console.log('✅ [STEP 5] PASSED: Graceful degradation to UNVERIFIED under API timeouts validated.');
