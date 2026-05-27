@@ -1,11 +1,12 @@
 import React from 'react';
-import { NormalizationResult } from '../lib/types';
-import { Sparkles, ShieldCheck, ArrowRight, BookOpen, AlertTriangle, AlertCircle, HelpCircle } from 'lucide-react';
+import { NormalizationResult, ASTSegment } from '../lib/types';
+import { Sparkles, BookOpen, ArrowRight, ShieldCheck, AlertTriangle, AlertCircle, HelpCircle } from 'lucide-react';
 
 interface ResponseComparisonProps {
   rawResponse: string;
   enhancedResponse: string;
   normalization: NormalizationResult | undefined;
+  segments: ASTSegment[] | undefined;
   isLoading: boolean;
   modeUsed: 'generic' | 'enhanced' | null;
 }
@@ -14,29 +15,159 @@ export const ResponseComparison: React.FC<ResponseComparisonProps> = ({
   rawResponse,
   enhancedResponse,
   normalization,
+  segments,
   isLoading,
   modeUsed,
 }) => {
-  // Parses custom annotation brackets into rich inline React nodes with premium badge structures
-  const renderEnhancedText = (text: string) => {
+  
+  // Highlights BNS/BNSS/BSA replacement targets in enhanced text with modern badge style
+  const renderSectionHighlighter = (str: string) => {
+    if (!str) return '';
+    const sectionPattern = /\b(Section\s+[\dA-Za-z()]+?\s+(?:BNS|BNSS|BSA))\b/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = sectionPattern.exec(str)) !== null) {
+      const startIndex = match.index;
+      if (startIndex > lastIndex) {
+        parts.push(str.substring(lastIndex, startIndex));
+      }
+      parts.push(
+        <span
+          key={startIndex}
+          className="bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-semibold px-2 py-0.5 rounded text-xs inline-block align-baseline font-mono shadow-sm"
+        >
+          {match[0]}
+        </span>
+      );
+      lastIndex = sectionPattern.lastIndex;
+    }
+
+    if (lastIndex < str.length) {
+      parts.push(str.substring(lastIndex));
+    }
+
+    return parts.length > 0 ? parts : str;
+  };
+
+  const renderASTSegments = (segmentsList: ASTSegment[]) => {
+    return (
+      <div className="whitespace-pre-wrap font-sans text-sm text-zinc-300 leading-relaxed font-normal">
+        {segmentsList.map((seg, idx) => {
+          if (seg.type === 'text') {
+            return <React.Fragment key={idx}>{renderSectionHighlighter(seg.content)}</React.Fragment>;
+          }
+          
+          const v = seg.verification;
+          if (!v) return <span key={idx}>{seg.content}</span>;
+
+          const orig = seg.content;
+          const reasoning = v.reasoning || '';
+
+          if (v.status === 'VERIFIED') {
+            const hasLink = !!v.ik_doc_id;
+            const displayCase = v.case_name || 'Unknown Case';
+            const displayCitations = [];
+
+            if (v.corrected_text) {
+              displayCitations.push(
+                <span
+                  key="corr"
+                  title={`Original: ${orig}. Corrected page number dynamically.`}
+                  className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-md text-[11px] font-semibold mx-1 my-0.5 shadow-sm align-middle cursor-help"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>CORRECTED: {v.corrected_text}</span>
+                </span>
+              );
+            }
+
+            if (hasLink) {
+              const caseLink = `https://indiankanoon.org/doc/${v.ik_doc_id}/`;
+              displayCitations.push(
+                <a
+                  key="ver-link"
+                  href={caseLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={reasoning}
+                  className="inline-flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all mx-1 my-0.5 shadow-sm align-middle hover:border-emerald-500/50 cursor-pointer"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>VERIFIED</span>
+                  <span className="text-emerald-500/40 font-normal">|</span>
+                  <span className="underline decoration-emerald-500/30 hover:decoration-emerald-500/70 truncate max-w-[200px] font-medium">{displayCase}</span>
+                </a>
+              );
+            } else {
+              displayCitations.push(
+                <span
+                  key="ver"
+                  title={reasoning}
+                  className="inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-md text-[11px] font-semibold mx-1 my-0.5 shadow-sm align-middle cursor-help"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>VERIFIED</span>
+                  <span className="text-emerald-500/40 font-normal">|</span>
+                  <span className="truncate max-w-[200px] font-medium">{displayCase}</span>
+                </span>
+              );
+            }
+
+            return <React.Fragment key={idx}>{displayCitations}</React.Fragment>;
+          } else if (v.status === 'NOT_FOUND') {
+            const hasError = v.hallucination_flags.some((f) => f.severity === 'ERROR');
+            const reasonType = hasError ? 'Hallucinated' : 'Fabricated';
+            return (
+              <span
+                key={idx}
+                title={`${reasoning}. Overruled or impossible parameters detected.`}
+                className="inline-flex items-center gap-1 bg-red-500/10 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-md text-[11px] font-semibold mx-1 my-0.5 shadow-sm align-middle cursor-help"
+              >
+                <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                <span>REMOVED</span>
+                <span className="text-red-500/40 font-normal">|</span>
+                <span className="line-through decoration-red-500/50 font-mono text-[10px]">{orig}</span>
+              </span>
+            );
+          } else {
+            // UNVERIFIED status (unknown format, or API errors/timeouts)
+            return (
+              <span
+                key={idx}
+                title={reasoning}
+                className="inline-flex items-center gap-1 bg-orange-500/10 text-orange-400 border border-orange-500/30 px-2 py-0.5 rounded-md text-[11px] font-semibold mx-1 my-0.5 shadow-sm align-middle cursor-help"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                <span>UNVERIFIED</span>
+                <span className="text-orange-500/40 font-normal">|</span>
+                <span className="font-mono text-[10px]">{orig}</span>
+              </span>
+            );
+          }
+        })}
+      </div>
+    );
+  };
+
+  // Fallback string replacement parser (backward compatibility)
+  const renderEnhancedTextLegacy = (text: string) => {
     if (!text) return null;
 
     const parts = [];
     let lastIndex = 0;
     
-    // Catch-all regex for safety badge blocks
     const badgeRegex = /\[(✅ VERIFIED - \[(.*?)\]\((.*?)\)|✅ VERIFIED - (.*?)|❌ REMOVED - (.*?)|⚠️ CORRECTED|⚠️ UNVERIFIED)\]/g;
     let match;
 
     while ((match = badgeRegex.exec(text)) !== null) {
       const startIndex = match.index;
       
-      // Push preceding text
       if (startIndex > lastIndex) {
         parts.push(text.substring(lastIndex, startIndex));
       }
 
-      const matchText = match[0];
       const matchType = match[1];
 
       if (matchType.startsWith('✅ VERIFIED')) {
@@ -52,7 +183,7 @@ export const ResponseComparison: React.FC<ResponseComparisonProps> = ({
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all mx-1 my-0.5 shadow-sm align-middle hover:border-emerald-500/50 cursor-pointer"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0 animate-pulse" />
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
               <span>VERIFIED</span>
               <span className="text-emerald-500/40 font-normal">|</span>
               <span className="underline decoration-emerald-500/30 hover:decoration-emerald-500/70 truncate max-w-[200px] font-medium">{caseName}</span>
@@ -125,37 +256,6 @@ export const ResponseComparison: React.FC<ResponseComparisonProps> = ({
     );
   };
 
-  // Highlights BNS/BNSS/BSA replacement targets in enhanced text with modern badge style
-  const renderSectionHighlighter = (str: string) => {
-    if (!str) return '';
-    const sectionPattern = /\b(Section\s+[\dA-Za-z()]+?\s+(?:BNS|BNSS|BSA))\b/g;
-    const parts = [];
-    let lastIndex = 0;
-    let match;
-
-    while ((match = sectionPattern.exec(str)) !== null) {
-      const startIndex = match.index;
-      if (startIndex > lastIndex) {
-        parts.push(str.substring(lastIndex, startIndex));
-      }
-      parts.push(
-        <span
-          key={startIndex}
-          className="bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-semibold px-2 py-0.5 rounded text-xs inline-block align-baseline font-mono shadow-sm"
-        >
-          {match[0]}
-        </span>
-      );
-      lastIndex = sectionPattern.lastIndex;
-    }
-
-    if (lastIndex < str.length) {
-      parts.push(str.substring(lastIndex));
-    }
-
-    return parts.length > 0 ? parts : str;
-  };
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 w-full">
       {/* Generic AI Response (Warning styled, unverified) */}
@@ -207,7 +307,7 @@ export const ResponseComparison: React.FC<ResponseComparisonProps> = ({
           </div>
         ) : enhancedResponse ? (
           <div className="flex-1 flex flex-col max-h-[550px] overflow-y-auto pr-1">
-            {renderEnhancedText(enhancedResponse)}
+            {segments ? renderASTSegments(segments) : renderEnhancedTextLegacy(enhancedResponse)}
 
             {normalization && normalization.replacements.length > 0 && (
               <div className="mt-6 pt-5 border-t border-zinc-900/80">
@@ -258,4 +358,3 @@ export const ResponseComparison: React.FC<ResponseComparisonProps> = ({
     </div>
   );
 };
-

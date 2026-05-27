@@ -38,6 +38,19 @@ export const normalizeKey = (key: string): string => {
   return key.toUpperCase().replace(/[^0-9A-Z()]/g, '');
 };
 
+function getActAbbreviation(act: string): string {
+  const clean = act.trim().toLowerCase();
+  if (clean.includes('penal') || clean === 'ipc') return 'IPC';
+  if (clean.includes('procedure') || clean === 'crpc') return 'CrPC';
+  if (clean.includes('evidence') || clean === 'iea') return 'IEA';
+  if (clean.includes('nyaya') || clean === 'bns') return 'BNS';
+  if (clean.includes('nagarik') || clean === 'bnss') return 'BNSS';
+  if (clean.includes('sakshya') || clean === 'bsa') return 'BSA';
+
+  const uppercaseMatches = act.replace(/[^A-Z]/g, '');
+  return uppercaseMatches || act.toUpperCase();
+}
+
 async function loadMappings(): Promise<SectionMapping[]> {
   try {
     const { data, error } = await supabase
@@ -57,20 +70,11 @@ interface LookupEntry {
   newAct: string;
 }
 
-function buildLookup(mappings: SectionMapping[]): Map<string, Map<string, LookupEntry>> {
+function buildLookup(
+  mappings: SectionMapping[],
+  actAlias: Record<string, string>
+): Map<string, Map<string, LookupEntry>> {
   const lookup = new Map<string, Map<string, LookupEntry>>();
-  lookup.set('IPC', new Map());
-  lookup.set('CrPC', new Map());
-  lookup.set('IEA', new Map());
-
-  const actAlias: Record<string, string> = {
-    'indian penal code': 'IPC',
-    'ipc': 'IPC',
-    'code of criminal procedure': 'CrPC',
-    'crpc': 'CrPC',
-    'indian evidence act': 'IEA',
-    'iea': 'IEA',
-  };
 
   for (const m of mappings) {
     const actKey = actAlias[m.old_act.toLowerCase()] || 'IPC';
@@ -107,28 +111,43 @@ export async function normalizeSections(text: string): Promise<NormalizationResu
   if (!text) return { original_text: '', normalized_text: '', replacements: [] };
 
   const mappings = await loadMappings();
-  const lookup = buildLookup(mappings);
   const rawReplacements: Replacement[] = [];
   const plans: ReplacementPlan[] = [];
 
-  const actNames: Record<string, string> = {
-    'indian penal code': 'IPC',
-    'ipc': 'IPC',
-    'code of criminal procedure': 'CrPC',
-    'crpc': 'CrPC',
-    'indian evidence act': 'IEA',
-    'iea': 'IEA',
-  };
+  // Dynamically resolve abbreviation resolvers from database mappings
+  const actAlias: Record<string, string> = {};
+  const newActAbbr: Record<string, string> = {};
 
-  const newActAbbr: Record<string, string> = {
-    'IPC': 'BNS',
-    'CrPC': 'BNSS',
-    'IEA': 'BSA',
-  };
+  for (const m of mappings) {
+    const canonicalOld = getActAbbreviation(m.old_act);
+    const canonicalNew = getActAbbreviation(m.new_act);
 
-  // Regular expression to match section references dynamically.
-  // Handles: bare "420 IPC", "Section 420 IPC", "Sections 420, 406 IPC", "u/s 420 IPC", and optional enactment years.
-  const pattern = /\b(?:(?:Sections?|u\/s)\s+)?((?:\d+[-_]?[A-Za-z]*(?:\(\d+\))?)(?:\s*(?:,\s*|\band\b\s*|&|\bor\b\s*)\s*(?:\d+[-_]?[A-Za-z]*(?:\(\d+\))?))*)\s+(?:of\s+the\s+|of\s+|under\s+)?(Indian\s+Penal\s+Code|IPC|Code\s+of\s+Criminal\s+Procedure|CrPC|Indian\s+Evidence\s+Act|IEA)(?:\s*,\s*(1860|1973|1872))?\b/gi;
+    actAlias[m.old_act.toLowerCase()] = canonicalOld;
+    actAlias[canonicalOld.toLowerCase()] = canonicalOld; // Map the abbreviation itself
+    newActAbbr[canonicalOld] = canonicalNew;
+  }
+
+  const lookup = buildLookup(mappings, actAlias);
+
+  // Construct dynamic act search regex including both names and abbreviations
+  const actsSet = new Set<string>();
+  for (const m of mappings) {
+    actsSet.add(m.old_act);
+    const abbr = getActAbbreviation(m.old_act);
+    actsSet.add(abbr);
+  }
+
+  const uniqueOldActs = Array.from(actsSet)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  const escapedActs = uniqueOldActs.map((act) => act.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
+
+  // Regex to match section references dynamically, supporting lists, bare sections, hyphens, and subsections
+  const pattern = new RegExp(
+    `\\b(?:(?:Sections?|u\\/s)\\s+)?((?:\\d+[-_]?[A-Za-z]*(?:\\(\\d+\\))?)(?:\\s*(?:,\\s*|\\band\\b\\s*|&|\\bor\\b\\s*)\\s*(?:\\d+[-_]?[A-Za-z]*(?:\\(\\d+\\))?))*)\\s+(?:of\\s+the\\s+|of\\s+|under\\s+)?(${escapedActs})(?:\\s*,\\s*\\d{4})?\\b`,
+    'gi'
+  );
 
   let match;
   pattern.lastIndex = 0;
@@ -137,9 +156,8 @@ export async function normalizeSections(text: string): Promise<NormalizationResu
     const fullMatch = match[0];
     const sectionsStr = match[1];
     const actName = match[2];
-    const yearMatched = match[3];
 
-    const actKey = actNames[actName.toLowerCase()] || 'IPC';
+    const actKey = actAlias[actName.toLowerCase()] || 'IPC';
     const actLookup = lookup.get(actKey);
     if (!actLookup) continue;
 
@@ -191,7 +209,7 @@ export async function normalizeSections(text: string): Promise<NormalizationResu
         prefixWord = 'Sections';
       }
 
-      // Enactment years are stripped in production-grade output
+      // Strips enactment year dynamically (e.g. BNS instead of BNS, 1860)
       const newText = `${prefixWord} ${joined} ${newActName}`;
       
       plans.push({
@@ -205,7 +223,7 @@ export async function normalizeSections(text: string): Promise<NormalizationResu
     }
   }
 
-  // Execute positional replacements from last to first to guarantee index safety
+  // Positional replacement in reverse order to ensure index shift safety
   let normalizedText = text;
   plans.sort((a, b) => b.start - a.start);
   for (const plan of plans) {
@@ -215,7 +233,7 @@ export async function normalizeSections(text: string): Promise<NormalizationResu
       normalizedText.substring(plan.end);
   }
 
-  // Deduplicate mapping replacements for visual summary rendering
+  // Deduplicate mappings
   const seen = new Set<string>();
   const uniqueReplacements: Replacement[] = [];
   for (const r of rawReplacements) {

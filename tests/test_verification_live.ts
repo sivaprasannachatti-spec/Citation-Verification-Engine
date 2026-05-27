@@ -1,6 +1,6 @@
-import './env-loader';
-import { extractCitations } from './citation-extractor';
-import { verifyAllCitations } from './citation-verifier';
+import '../src/lib/env-loader';
+import { extractCitations } from '../src/lib/citation-extractor';
+import { verifyAllCitations } from '../src/lib/citation-verifier';
 
 async function testLiveVerification() {
   console.log('==================================================');

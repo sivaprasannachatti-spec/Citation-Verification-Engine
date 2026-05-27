@@ -177,6 +177,7 @@ export default function Home() {
               rawResponse={response?.raw_response || ''}
               enhancedResponse={response?.enhanced_response || ''}
               normalization={response?.normalization}
+              segments={response?.segments}
               isLoading={isLoading}
               modeUsed={modeUsed}
             />

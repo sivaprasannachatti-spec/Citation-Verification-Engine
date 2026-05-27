@@ -182,23 +182,79 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 2: DETERMINISTIC citation safety pipeline (NO AI)
+    const t0 = performance.now();
+    const trace: Array<{ stage: string; duration_ms: number; details: string }> = [];
+
+    // Stage 1: Citation Extraction
+    const t1 = performance.now();
     const citations = await extractCitations(rawResponse);
+    trace.push({
+      stage: 'Citation Extraction',
+      duration_ms: Math.round(performance.now() - t1),
+      details: `Extracted ${citations.length} citation candidate(s) (including heuristics & false positive filters).`,
+    });
+
+    // Stage 2: Section Normalization
+    const t2 = performance.now();
     const normalization = await normalizeSections(rawResponse);
-    const { results: verifications, apiCallsMade, apiCostInr } = await verifyAllCitations(citations);
-    const { annotatedText, report } = annotateTextAndReport(
+    trace.push({
+      stage: 'Section Normalization',
+      duration_ms: Math.round(performance.now() - t2),
+      details: `Analyzed text and converted ${normalization.replacements.length} legacy section reference(s) to modern BNS/BNSS/BSA codes.`,
+    });
+
+    // Stage 3: Verification
+    const t3 = performance.now();
+    const { results: verifications, apiCallsMade, apiCostInr, pipelineMode } = await verifyAllCitations(citations);
+    trace.push({
+      stage: 'Kanoon Verification',
+      duration_ms: Math.round(performance.now() - t3),
+      details: `Executed verification in ${pipelineMode} mode. Performed ${apiCallsMade} API call(s) with bounded throttling.`,
+    });
+
+    // Stage 4: Annotation & Report Compilation
+    const t4 = performance.now();
+    const { annotatedText, segments, report } = annotateTextAndReport(
       rawResponse,
       verifications,
       normalization,
       apiCallsMade,
       apiCostInr
     );
+    trace.push({
+      stage: 'Annotation & Report Compilation',
+      duration_ms: Math.round(performance.now() - t4),
+      details: 'Preserved layout, escaped HTML, stripped LLM badge spoof injections, built AST-segments, and verified report invariants.',
+    });
+
+    const totalLatency = Math.round(performance.now() - t0);
+
+    const preFilteredCount = verifications.filter((v) =>
+      v.hallucination_flags.some((f) => f.severity === 'ERROR')
+    ).length;
+    const cacheHitCount = verifications.filter((v) => v.cached).length;
+    const cacheMissCount = verifications.filter((v) => !v.cached && !v.hallucination_flags.some((f) => f.severity === 'ERROR')).length;
+
+    const enrichedReport = {
+      ...report,
+      latency_ms: totalLatency,
+      pre_filter_savings_inr: preFilteredCount * 1.0,
+      cache_diagnostics: {
+        hits: cacheHitCount,
+        misses: cacheMissCount,
+        invalidated: 0,
+        version: 2, // CACHE_VERSION
+      },
+      pipeline_trace: trace,
+    };
 
     return NextResponse.json({
       raw_response: rawResponse,
       enhanced_response: annotatedText,
+      segments,
       citations: verifications,
       normalization,
-      report,
+      report: enrichedReport,
       provider_used: provider,
       keys_tried: keysTried,
     });

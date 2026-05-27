@@ -1,16 +1,32 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { CitationReport } from '../lib/types';
-import { Award, Database, Coins, ShieldCheck, FileCheck, RefreshCw, XCircle } from 'lucide-react';
+import { Award, Database, Coins, ShieldCheck, FileCheck, RefreshCw, XCircle, Timer, TrendingUp, Info } from 'lucide-react';
 
 interface VerificationReportProps {
-  report: CitationReport | undefined;
+  report: (CitationReport & {
+    latency_ms?: number;
+    pre_filter_savings_inr?: number;
+    cache_diagnostics?: {
+      hits: number;
+      misses: number;
+      invalidated: number;
+      version: number;
+    };
+    pipeline_trace?: Array<{
+      stage: string;
+      duration_ms: number;
+      details: string;
+    }>;
+  }) | undefined;
   isLoading: boolean;
 }
 
 export const VerificationReport: React.FC<VerificationReportProps> = ({ report, isLoading }) => {
+  const [showTrace, setShowTrace] = useState(false);
+
   if (isLoading) {
     return (
-      <div className="bg-zinc-950/20 border border-zinc-900/60 rounded-3xl p-6 h-[280px] flex flex-col justify-between animate-pulse">
+      <div className="bg-zinc-950/20 border border-zinc-900/60 rounded-3xl p-6 h-[380px] flex flex-col justify-between animate-pulse">
         <div className="flex items-center gap-3">
           <div className="w-5 h-5 bg-zinc-800 rounded" />
           <div className="h-4 bg-zinc-800 rounded w-1/2" />
@@ -35,7 +51,7 @@ export const VerificationReport: React.FC<VerificationReportProps> = ({ report, 
 
   if (!report) {
     return (
-      <div className="bg-zinc-950/10 border border-zinc-900 rounded-3xl p-6 text-center text-zinc-600 text-xs font-semibold uppercase tracking-wider h-[280px] flex items-center justify-center">
+      <div className="bg-zinc-950/10 border border-zinc-900 rounded-3xl p-6 text-center text-zinc-650 text-xs font-semibold uppercase tracking-wider h-[380px] flex items-center justify-center">
         No verification report compiled. Submit a query to see performance logs.
       </div>
     );
@@ -55,15 +71,28 @@ export const VerificationReport: React.FC<VerificationReportProps> = ({ report, 
     return 'shadow-red-glow';
   };
 
+  // Calculate pre-filter + cache hits total cost saved (INR 1.00 per lookup)
+  const cacheHits = report.cache_diagnostics?.hits || 0;
+  const preFilterSaved = report.pre_filter_savings_inr || 0;
+  const totalSaved = (cacheHits * 1.0) + preFilterSaved;
+
   return (
-    <div className="bg-zinc-950/20 border border-zinc-900 rounded-3xl p-6 relative overflow-hidden flex flex-col justify-between h-[320px] shadow-premium-soft transition-all duration-300 hover:border-zinc-800/80">
+    <div className="bg-zinc-950/20 border border-zinc-900 rounded-3xl p-6 relative overflow-hidden flex flex-col justify-between min-h-[380px] shadow-premium-soft transition-all duration-300 hover:border-zinc-800/80">
       <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-white/[0.01] to-transparent rounded-bl-full pointer-events-none" />
       
       <div>
-        <h3 className="text-zinc-200 font-semibold text-xs uppercase tracking-wider flex items-center gap-2 mb-5">
-          <Award className="w-4 h-4 text-emerald-400" />
-          Precedent Verification Report
-        </h3>
+        <div className="flex justify-between items-center mb-5">
+          <h3 className="text-zinc-200 font-semibold text-xs uppercase tracking-wider flex items-center gap-2">
+            <Award className="w-4 h-4 text-emerald-400" />
+            Precedent Verification Report
+          </h3>
+          {report.latency_ms && (
+            <span className="text-[10px] text-zinc-500 font-mono flex items-center gap-1">
+              <Timer className="w-3 h-3 text-indigo-400" />
+              {report.latency_ms}ms latency
+            </span>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
           {/* Accuracy Ring Gauge */}
@@ -160,28 +189,67 @@ export const VerificationReport: React.FC<VerificationReportProps> = ({ report, 
         </div>
       </div>
 
-      {/* API Cost / Calls Footer */}
-      <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-zinc-900/60">
-        <div className="flex items-center gap-3 bg-zinc-900/10 border border-zinc-900/60 rounded-xl p-2.5 transition-colors hover:bg-zinc-900/20">
-          <Database className="w-4 h-4 text-indigo-400 shrink-0" />
-          <div>
-            <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">
-              Kanoon API Calls
+      {/* Observability traces drawer toggle */}
+      {report.pipeline_trace && report.pipeline_trace.length > 0 && (
+        <div className="mt-4 border-t border-zinc-900/60 pt-3">
+          <button
+            onClick={() => setShowTrace(!showTrace)}
+            className="text-[10px] text-zinc-400 hover:text-zinc-200 flex items-center gap-1 font-bold uppercase tracking-wider cursor-pointer"
+          >
+            <Info className="w-3.5 h-3.5 text-indigo-400" />
+            {showTrace ? 'Hide Trace Logs' : 'View Safety Pipeline Trace'}
+          </button>
+          
+          {showTrace && (
+            <div className="mt-2.5 space-y-2 max-h-[120px] overflow-y-auto pr-1 bg-zinc-950/40 p-3 rounded-2xl border border-zinc-900/80">
+              {report.pipeline_trace.map((tr, idx) => (
+                <div key={idx} className="text-[11px] leading-relaxed">
+                  <div className="flex justify-between font-mono font-bold text-zinc-300">
+                    <span>{idx + 1}. {tr.stage}</span>
+                    <span className="text-indigo-400">{tr.duration_ms}ms</span>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">{tr.details}</p>
+                </div>
+              ))}
             </div>
-            <div className="text-xs font-mono font-bold text-zinc-200">
-              {report.api_calls_made}
+          )}
+        </div>
+      )}
+
+      {/* Cost Telemetry Footer */}
+      <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-zinc-900/60">
+        <div className="flex items-center gap-2 bg-zinc-900/10 border border-zinc-900/60 rounded-xl p-2 transition-colors hover:bg-zinc-900/20">
+          <Database className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+          <div>
+            <div className="text-[7px] text-zinc-500 font-bold uppercase tracking-widest">
+              API Calls / Hits
+            </div>
+            <div className="text-[11px] font-mono font-bold text-zinc-200">
+              {report.api_calls_made} / <span className="text-emerald-400" title="Cache Hits">{cacheHits}</span>
             </div>
           </div>
         </div>
-        
-        <div className="flex items-center gap-3 bg-zinc-900/10 border border-zinc-900/60 rounded-xl p-2.5 transition-colors hover:bg-zinc-900/20">
-          <Coins className="w-4 h-4 text-emerald-400 shrink-0" />
+
+        <div className="flex items-center gap-2 bg-zinc-900/10 border border-zinc-900/60 rounded-xl p-2 transition-colors hover:bg-zinc-900/20">
+          <Coins className="w-3.5 h-3.5 text-red-400 shrink-0" />
           <div>
-            <div className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest">
-              Pipeline Cost
+            <div className="text-[7px] text-zinc-500 font-bold uppercase tracking-widest">
+              API Cost
             </div>
-            <div className="text-xs font-mono font-bold text-emerald-400">
+            <div className="text-[11px] font-mono font-bold text-zinc-200">
               ₹{report.api_cost_inr.toFixed(2)}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 bg-zinc-900/10 border border-zinc-900/60 rounded-xl p-2 transition-colors hover:bg-zinc-900/20">
+          <TrendingUp className="w-3.5 h-3.5 text-emerald-400 shrink-0 animate-pulse" />
+          <div>
+            <div className="text-[7px] text-zinc-500 font-bold uppercase tracking-widest">
+              Cost Saved
+            </div>
+            <div className="text-[11px] font-mono font-bold text-emerald-400">
+              ₹{totalSaved.toFixed(2)}
             </div>
           </div>
         </div>

@@ -1,17 +1,22 @@
 import { Citation, HallucinationFlag } from './types';
 
+export function getCurrentLegalYear(): number {
+  return new Date().getFullYear();
+}
+
 /**
  * Deterministic hallucination detection.
  * NO AI involved — purely rule-based safety checks.
  */
 export function detectHallucinations(citation: Citation): HallucinationFlag[] {
   const flags: HallucinationFlag[] = [];
+  const currentYear = getCurrentLegalYear();
 
-  // RULE 1: Future Year — citation year > current max reportable year
-  if (citation.year > 2026) {
+  // RULE 1: Future Year — citation year > current legal year
+  if (citation.year > currentYear) {
     flags.push({
       rule: 'RULE 1 — FUTURE YEAR',
-      description: `Citation year ${citation.year} is in the future (> 2026). This case cannot exist.`,
+      description: `Citation year ${citation.year} is in the future (> ${currentYear}). This case cannot exist.`,
       severity: 'ERROR',
     });
   }

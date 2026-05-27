@@ -1,0 +1,42 @@
+# Checklist for Safety Engine Refactoring & Production Hardening
+
+- [x] 1. Test Isolation & Root `/tests` Migration
+  - [x] Move `src/lib/test_pipeline.ts` to `tests/test_pipeline.ts` and update imports
+  - [x] Move `src/lib/test_verification_live.ts` to `tests/test_verification_live.ts` and update imports
+  - [x] Delete original test files from `src/lib/`
+- [x] 2. Indian Kanoon Proxy Route Hardening
+  - [x] Refactor `src/app/api/indian-kanoon/route.ts` to use POST upstream
+  - [x] Support both GET (parameters) and POST (body) for `/api/indian-kanoon`
+- [x] 3. Remove Hardcoded Year Validation
+  - [x] Create `getCurrentLegalYear()` in `src/lib/hallucination-detector.ts`
+  - [x] Replace `2026` threshold with `getCurrentLegalYear()`
+- [x] 4. Extensible & Robust Citation Extractor
+  - [x] Implement `normalizeCitationInput(text)` in `src/lib/citation-extractor.ts` to normalize spaces and fix OCR spacing errors
+  - [x] Add `canonicalizeCitation(text, pattern)` to clean dots, brackets, and spaces
+  - [x] Build Heuristic Fallback layer for `UNKNOWN_FORMAT` legal references
+  - [x] Build False Positive Proximity Filter using legal keywords context score
+  - [x] Refactor `parseCitation` to dynamically parse groups based on database patterns
+- [x] 5. Dynamic Section Normalizer
+  - [x] Build dynamic abbreviation resolvers `actAlias` and `newActAbbr` from database mappings
+  - [x] Construct the section search regex dynamically using unique old act names loaded from DB
+- [x] 6. Throttled & Semantically Correct Citation Verifier
+  - [x] Update Indian Kanoon search calls in `citation-verifier.ts` to use POST requests
+  - [x] Implement bounded concurrency (max 5) and exponential retry queues
+  - [x] Implement robust classification rules (VERIFIED, CORRECTED, UNVERIFIED, REMOVED)
+  - [x] Implement `CACHE_VERSION` validation, cache freshness checks, and grace fallbacks
+  - [x] Add Overruled Case Warnings database check
+- [x] 7. AST Segment Generator & Annotator
+  - [x] Strip LLM badge spoofing from raw text and escape HTML
+  - [x] Implement AST-style segment decomposition (array of text and citation segments)
+  - [x] Enforce metrics integrity reconciliation validation checks
+- [x] 8. Frontend Component Upgrades
+  - [x] Update `ResponseComparison.tsx` to render AST-style segments directly in React
+  - [x] Update `VerificationReport.tsx` to display cost savings, cache hit telemetry, latency, and trace
+  - [x] Update `CitationAlerts.tsx` to group warnings, display reasoning, and show overruled alerts
+- [x] 9. Database & Migration Schema Upgrade
+  - [x] Add `cache_version` and `cache_metadata` to `verification_cache` table in `supabase/schema.sql`
+- [x] 10. Adversarial Test Suite
+  - [x] Create `tests/adversarial_suite.ts` testing edge cases, large inputs, OCR corruption, and prompt injections
+- [x] 11. Verification & Build
+  - [x] Run all automated test suites
+  - [x] Run `npm run build` to confirm compilation passes

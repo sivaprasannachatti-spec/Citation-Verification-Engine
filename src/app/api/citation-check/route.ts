@@ -12,11 +12,12 @@ export async function POST(request: NextRequest) {
     const citations = await extractCitations(text);
     const normalization = await normalizeSections(text);
     const { results: verifications, apiCallsMade, apiCostInr } = await verifyAllCitations(citations);
-    const { annotatedText, report } = annotateTextAndReport(text, verifications, normalization, apiCallsMade, apiCostInr);
+    const { annotatedText, segments, report } = annotateTextAndReport(text, verifications, normalization, apiCallsMade, apiCostInr);
 
     return NextResponse.json({
       original_text: text,
       annotated_text: annotatedText,
+      segments,
       citations: verifications,
       normalization,
       report,

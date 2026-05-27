@@ -1,6 +1,6 @@
 -- Supabase Schema for Citation Safety Engine
 
--- 1. Citation Patterns
+-- 1. Citation Patterns (Dynamic Capture-Group Parsing Enabled)
 CREATE TABLE IF NOT EXISTS citation_patterns (
     id SERIAL PRIMARY KEY,
     pattern_name VARCHAR(100) NOT NULL UNIQUE,
@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS citation_patterns (
     format_template VARCHAR(255) NOT NULL,
     example VARCHAR(255) NOT NULL,
     jurisdiction VARCHAR(100) NOT NULL,
+    year_group INT DEFAULT 1,
+    volume_group INT,
+    page_group INT DEFAULT 3,
+    court_group INT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -22,14 +26,16 @@ CREATE TABLE IF NOT EXISTS section_mappings (
     CONSTRAINT unique_old_act_section UNIQUE (old_section, old_act)
 );
 
--- 3. Verification Cache
+-- 3. Verification Cache (Schema-Aware with Versioning and Metadata Diagnostics)
 CREATE TABLE IF NOT EXISTS verification_cache (
     citation_text VARCHAR(255) PRIMARY KEY,
     verified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(50) NOT NULL CHECK (status IN ('VERIFIED', 'NOT_FOUND', 'UNVERIFIED')),
     ik_doc_id VARCHAR(100),
     case_name TEXT,
-    corrected_text VARCHAR(255)
+    corrected_text VARCHAR(255),
+    cache_version INT DEFAULT 1,
+    cache_metadata JSONB DEFAULT '{}'::jsonb
 );
 
 -- Indexes for performance

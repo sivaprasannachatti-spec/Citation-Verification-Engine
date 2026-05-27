@@ -1,9 +1,9 @@
-import './env-loader';
-import { extractCitations } from './citation-extractor';
-import { detectHallucinations } from './hallucination-detector';
-import { normalizeSections } from './section-normalizer';
-import { annotateTextAndReport } from './citation-annotator';
-import { Citation, VerificationResult, NormalizationResult } from './types';
+import '../src/lib/env-loader';
+import { extractCitations } from '../src/lib/citation-extractor';
+import { detectHallucinations } from '../src/lib/hallucination-detector';
+import { normalizeSections } from '../src/lib/section-normalizer';
+import { annotateTextAndReport } from '../src/lib/citation-annotator';
+import { Citation, VerificationResult } from '../src/lib/types';
 
 // Mock verifier that acts like the real one but uses local rules/cache to bypass network API calls
 async function runMockPipeline(text: string) {
@@ -43,7 +43,8 @@ async function runMockPipeline(text: string) {
       case_name,
       corrected_text,
       cached: true,
-      hallucination_flags: flags
+      hallucination_flags: flags,
+      reasoning: 'Simulated mock verification result'
     };
   });
 

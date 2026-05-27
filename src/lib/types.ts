@@ -24,6 +24,7 @@ export interface VerificationResult {
   corrected_text: string | null;
   cached: boolean;
   hallucination_flags: HallucinationFlag[];
+  reasoning?: string;
 }
 
 export interface Replacement {
@@ -57,12 +58,19 @@ export interface LLMRequest {
   mode: 'generic' | 'enhanced';
 }
 
+export interface ASTSegment {
+  type: 'text' | 'citation';
+  content: string;
+  verification?: VerificationResult;
+}
+
 export interface LLMResponse {
   raw_response: string;
   enhanced_response?: string;
   citations?: VerificationResult[];
   normalization?: NormalizationResult;
   report?: CitationReport;
+  segments?: ASTSegment[];
   provider_used: string;
   keys_tried: number;
 }
@@ -74,6 +82,10 @@ export interface CitationPattern {
   format_template: string;
   example: string;
   jurisdiction: string;
+  year_group?: number;
+  volume_group?: number | null;
+  page_group?: number;
+  court_group?: number | null;
 }
 
 export interface SectionMapping {
