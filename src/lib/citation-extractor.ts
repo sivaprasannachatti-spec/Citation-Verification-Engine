@@ -133,6 +133,13 @@ export function canonicalizeCitation(text: string, patternName: string): string 
 }
 
 export function isFalsePositive(citationText: string, fullText: string, matchIndex: number): boolean {
+  // Immediate prefix check: If the word 'invoice', 'model', or 'serial' is directly preceding the citation
+  const prefixStart = Math.max(0, matchIndex - 25);
+  const immediatePrefix = fullText.substring(prefixStart, matchIndex).toLowerCase();
+  if (/\b(?:invoice|model|serial|qty|hsn|ref|billing)\b/i.test(immediatePrefix)) {
+    return true; // Immediate suppression regardless of surrounding legal keyword score
+  }
+
   const start = Math.max(0, matchIndex - 100);
   const end = Math.min(fullText.length, matchIndex + citationText.length + 100);
   const windowText = fullText.substring(start, end).toLowerCase();

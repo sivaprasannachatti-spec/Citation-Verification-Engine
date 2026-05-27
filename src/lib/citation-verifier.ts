@@ -160,17 +160,18 @@ async function verifyViaIndianKanoon(
     console.log(`[API] Querying Indian Kanoon (POST) for: "${searchQuery}"`);
 
     const url = 'https://api.indiankanoon.org/search/';
+    const body = new URLSearchParams();
+    body.append('formInput', searchQuery);
+    body.append('pagenum', '0');
+
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Token ${apiKey}`,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
       },
-      body: JSON.stringify({
-        formInput: searchQuery,
-        pagenum: 0
-      }),
+      body: body.toString(),
       signal: AbortSignal.timeout(15000),
     });
 
@@ -291,11 +292,14 @@ function buildDynamicValidationPatterns(
 
   // Variations for specific known patterns
   if (pattern.pattern_name === 'SCC') {
-    exactStr = `(?:${exactStr}|${y}\\s+SCC\\s*\\(?${v}\\)?\\s+${p}\\b)`;
-    corrStr = `(?:${corrStr}|${y}\\s+SCC\\s*\\(?${v}\\)?\\s+(\\d{1,5})\\b)`;
+    exactStr = `(?:${exactStr}|${y}\\s+SCC\\s*\\(?${v}\\)?\\s+${p}\\b|${y}\\s+\\(?${v}\\)?\\s+SCC\\s+${p}\\b)`;
+    corrStr = `(?:${corrStr}|${y}\\s+SCC\\s*\\(?${v}\\)?\\s+(\\d{1,5})\\b|${y}\\s+\\(?${v}\\)?\\s+SCC\\s+(\\d{1,5})\\b)`;
+  } else if (pattern.pattern_name === 'SCR') {
+    exactStr = `(?:${exactStr}|${y}\\s+SCR\\s*\\(?${v}\\)?\\s+${p}\\b|${y}\\s+\\(?${v}\\)?\\s+SCR\\s+${p}\\b)`;
+    corrStr = `(?:${corrStr}|${y}\\s+SCR\\s*\\(?${v}\\)?\\s+(\\d{1,5})\\b|${y}\\s+\\(?${v}\\)?\\s+SCR\\s+(\\d{1,5})\\b)`;
   } else if (pattern.pattern_name === 'Cri_LJ') {
-    exactStr = `${y}\\s+Cri\\s*\\.?\\s*L\\.?\\s*J\\.?\\s+${p}\\b`;
-    corrStr = `${y}\\s+Cri\\s*\\.?\\s*L\\.?\\s*J\\.?\\s+(\\d{1,5})\\b`;
+    exactStr = `(?:${exactStr}|${y}\\s+Cri\\s*\\.?\\s*L\\.?\\s*J\\.?\\s+${p}\\b|\\(?${y}\\)?\\s+Cri\\s*\\.?\\s*L\\.?\\s*J\\.?\\s+${p}\\b)`;
+    corrStr = `(?:${corrStr}|${y}\\s+Cri\\s*\\.?\\s*L\\.?\\s*J\\.?\\s+(\\d{1,5})\\b|\\(?${y}\\)?\\s+Cri\\s*\\.?\\s*L\\.?\\s*J\\.?\\s+(\\d{1,5})\\b)`;
   }
 
   return {
@@ -410,7 +414,7 @@ function validateIKResults(
 async function verifyWithThrottling<T, R>(
   items: T[],
   fn: (item: T) => Promise<R>,
-  concurrencyLimit: number = 5,
+  concurrencyLimit: number = 2,
   maxRetries: number = 2
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
@@ -419,8 +423,14 @@ async function verifyWithThrottling<T, R>(
   async function worker() {
     while (index < items.length) {
       const currentIndex = index++;
+      if (currentIndex >= items.length) break;
       const item = items[currentIndex];
       
+      // Introduce pacing delay between concurrent requests to avoid API throttling
+      if (currentIndex > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+
       let attempt = 0;
       let success = false;
       let lastError: any;
@@ -523,7 +533,7 @@ export async function verifyAllCitations(
     const verifications = await verifyWithThrottling(
       uncached,
       (c) => verifyViaIndianKanoon(c, session),
-      5, // limit 5 active concurrent calls
+      2, // limit 2 active concurrent calls
       2  // retry 2 times on connection errors
     );
 

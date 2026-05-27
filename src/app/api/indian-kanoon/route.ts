@@ -14,18 +14,19 @@ async function handleSearch(formInput: string | null) {
     const url = 'https://api.indiankanoon.org/search/';
     console.log(`[Proxy] Fetching from Indian Kanoon (POST) for formInput: "${formInput}"`);
     
+    const body = new URLSearchParams();
+    body.append('formInput', formInput);
+    body.append('pagenum', '0');
+
     // Call IK search API using POST
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Token ${apiKey}`,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
       },
-      body: JSON.stringify({
-        formInput: formInput,
-        pagenum: 0
-      }),
+      body: body.toString(),
       signal: AbortSignal.timeout(15000),
     });
 

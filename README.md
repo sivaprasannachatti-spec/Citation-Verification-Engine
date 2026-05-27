@@ -110,14 +110,14 @@ Rule-based deterministic pre-filter that catches obviously impossible citations 
 
 | Rule | Detection | Severity |
 |------|-----------|----------|
-| **Future Year** | Citation year > 2026 | 🔴 ERROR — Auto-removed |
+| **Future Year** | Citation year > current year | 🔴 ERROR — Auto-removed |
 | **Impossible Volume** | SCC/SCR volume > 25 | 🔴 ERROR — Auto-removed |
 | **Impossible Page** | Page number > 5000 | 🟡 WARNING — Flagged |
 | **Pre-Modern Date** | Year < 1900 | 🟡 WARNING — Flagged |
 
 ```
 Input:  (2028) 3 SCC 45
-Result: ❌ REMOVED — "Citation year 2028 is in the future (> 2026). This case cannot exist."
+Result: ❌ REMOVED — "Citation year 2028 is in the future (> current year). This case cannot exist."
 ```
 
 ---
@@ -325,10 +325,16 @@ Open [http://localhost:3000](http://localhost:3000) — the dashboard will be li
 
 ```bash
 # Offline deterministic pipeline tests
-npx tsx src/lib/test_pipeline.ts
+npx tsx tests/test_pipeline.ts
 
 # Live Indian Kanoon API verification tests
-npx tsx src/lib/test_verification_live.ts
+npx tsx tests/test_verification_live.ts
+
+# Adversarial & Edge-Case Stress tests
+npx tsx tests/adversarial_suite.ts
+
+# Surprise domain legal topics tests
+npx tsx tests/surprise_topics.ts
 ```
 
 ### 5. Production Build
