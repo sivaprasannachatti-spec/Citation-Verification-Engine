@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Load .env first, then .env.local (later files win, matching Next.js precedence).
+for (const envFile of ['.env', '.env.local']) {
 try {
-  const envPath = path.resolve(process.cwd(), '.env.local');
+  const envPath = path.resolve(process.cwd(), envFile);
   console.log('ENV PATH:', envPath);
   console.log('EXISTS:', fs.existsSync(envPath));
   if (fs.existsSync(envPath)) {
@@ -20,6 +22,7 @@ try {
     }
   }
 } catch (e) {
-  console.error('Failed to load .env.local in env-loader:', e);
+  console.error(`Failed to load ${envFile} in env-loader:`, e);
+}
 }
 

@@ -52,7 +52,7 @@ export default function Home() {
       console.error(e);
       // Fallback response for demonstration when API keys are rate-limited or missing
       setResponse({
-        raw_response: `Error connecting to API. Please make sure GEMINI_API_KEY / GROQ_API_KEY is configured in your .env.local file.\n\nQuery received: "${queryText}"`,
+        raw_response: `Error connecting to API. Please make sure MISTRAL_API_KEY_1..N is configured in your .env.local file.\n\nQuery received: "${queryText}"`,
         provider_used: 'None (Error Fallback)',
         keys_tried: 0,
       });

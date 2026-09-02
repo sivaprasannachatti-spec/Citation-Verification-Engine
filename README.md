@@ -20,7 +20,7 @@
 
 ## 🚨 The Problem
 
-Modern Large Language Models (GPT-4, Gemini, Llama) are increasingly used by legal professionals for drafting complaints, applications, and court pleadings. But **LLMs hallucinate confidently** — and in legal contexts, this is catastrophic.
+Modern Large Language Models (GPT-4, Mistral, Llama) are increasingly used by legal professionals for drafting complaints, applications, and court pleadings. But **LLMs hallucinate confidently** — and in legal contexts, this is catastrophic.
 
 | LLM Failure Mode | Real-World Impact |
 |---|---|
@@ -48,7 +48,7 @@ Brahmo is a **deterministic AI safety layer** that sits between the LLM and the 
 │       ▼                                                          │
 │  ┌─────────────┐    Unsafe, unverified text                     │
 │  │   LLM API   │──────────────────────────┐                     │
-│  │ (Groq/Gemini│                          │                     │
+│  │ (Mistral)   │                          │                     │
 │  └─────────────┘                          ▼                     │
 │                              ┌────────────────────────┐         │
 │                              │  Citation Extractor     │         │
@@ -233,7 +233,7 @@ The pipeline compiles a real-time verification report with:
 | **Backend** | Next.js API Routes, TypeScript 5 | Serverless deterministic pipeline |
 | **Database** | Supabase (PostgreSQL) | Citation patterns, section mappings, verification cache |
 | **Verification API** | Indian Kanoon REST API | Live case law verification |
-| **LLM Providers** | Google Gemini, Groq (Llama 3.3 70B) | Legal text generation (multi-key rotation) |
+| **LLM Provider** | Mistral AI (`mistral-medium-3-5`) | Legal text generation (9-key rotation with rate-limit failover) |
 | **Icons** | Lucide React | Premium icon system |
 | **Deployment** | Vercel | Edge-optimized serverless hosting |
 
@@ -246,7 +246,7 @@ brahmo-citation-safety/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── llm/route.ts              # LLM generation endpoint (Gemini + Groq rotation)
+│   │   │   ├── llm/route.ts              # LLM generation endpoint (Mistral key rotation)
 │   │   │   ├── citation-check/route.ts    # Standalone citation verification endpoint
 │   │   │   ├── normalize-sections/route.ts # Section normalization endpoint
 │   │   │   └── indian-kanoon/route.ts     # Direct IK proxy endpoint
@@ -271,7 +271,7 @@ brahmo-citation-safety/
 │       └── matters.ts                     # Predefined legal matter templates
 │
 ├── supabase/                             # Database migration scripts
-├── .env.local                            # API keys (Kanoon, Gemini, Groq, Supabase)
+├── .env.local                            # API keys (Kanoon, Mistral, Supabase)
 ├── next.config.ts                        # Next.js configuration
 ├── tsconfig.json                         # TypeScript strict mode configuration
 └── package.json                          # Dependencies & scripts
@@ -286,7 +286,7 @@ brahmo-citation-safety/
 - **Node.js** 18+ and **npm**
 - **Indian Kanoon API Key** — [Request access](https://api.indiankanoon.org/)
 - **Supabase Project** — [Create free project](https://supabase.com/)
-- **LLM API Key(s)** — Google Gemini and/or Groq
+- **LLM API Key(s)** — Mistral AI (one or more; more keys = more rate-limit headroom)
 
 ### 1. Clone & Install
 
@@ -309,8 +309,9 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key_here
 
 # LLM Providers (comma-separated for key rotation)
-GEMINI_API_KEY=key1,key2,key3
-GROQ_API_KEY=key1,key2,key3
+MISTRAL_API_KEY_1=key1
+MISTRAL_API_KEY_2=key2
+MISTRAL_API_KEY_3=key3
 ```
 
 ### 3. Run Development Server

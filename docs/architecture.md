@@ -12,7 +12,7 @@ graph TD
     Frontend <--> NextAPI[Next.js API Server Routes /api/*]
     
     subgraph NextJS Backend Core (Node.js runtime)
-        LLM[LLM Service: Gemini & Groq fallback]
+        LLM[LLM Service: Mistral mistral-medium-3-5]
         Extractor[Citation Extractor: 6 Regex patterns]
         PreFilter[Hallucination Detector: 4 safety rules]
         Verifier[Citation Verifier: Parallel Promise.all Lookup]
@@ -42,7 +42,7 @@ sequenceDiagram
     participant AN as Annotator / Normalizer
 
     FE->>API: POST /api/llm { query, mode: "enhanced" }
-    API->>LLM: Generate response (Gemini -> Groq fallback)
+    API->>LLM: Generate response (rotating Mistral key pool)
     LLM-->>API: Raw text with citations & old sections
     
     API->>EX: extractCitations(raw_text)
@@ -76,10 +76,12 @@ Integrating the client-side UI and the backend API into a single Next.js project
 - **Simplified Deployment**: The entire engine (frontend client + safety API routes) compiles into a single server bundle run on Vercel or Node.js.
 
 ### 3.2. Sequential Multi-Key Rotation
-To mitigate rate limits (which are common on free tiers of Gemini and Groq):
-- The LLM route parses `GEMINI_API_KEY` and `GROQ_API_KEY` env vars as comma-separated lists of keys.
-- It attempts the API call with the first Gemini key. If it encounters a rate limit (HTTP 429), auth error, or timeout, it rotates to the next Gemini key and retries.
-- If all Gemini keys fail, it repeats the process using Groq's keys.
+To mitigate rate limits (common on Mistral free tiers):
+- `src/lib/mistral-keys.ts` reads a numbered key pool from `MISTRAL_API_KEY_1..N` (falling back to a comma-separated `MISTRAL_API_KEY`).
+- A module-level cursor advances on every request, so consecutive requests start on different keys instead of always hammering key #1.
+- On HTTP 429 the key is parked in a cooldown (honouring the `Retry-After` header, capped at 5 minutes) and the request immediately rotates to the next available key.
+- On 401/403 the key is disabled for the lifetime of the process, since it is invalid or revoked rather than merely throttled.
+- A successful call clears that key's cooldown. If every key is cooling down, the pool is retried anyway rather than hard-failing the request.
 
 ### 3.3. Dual-Level Pre-filtering
 Instead of sending every extracted citation directly to Indian Kanoon (which wastes API quota and increases latency):
@@ -126,7 +128,7 @@ Executes LLM query and returns results.
       "api_calls_made": 0,
       "api_cost_inr": 0.0
     },
-    "provider_used": "Gemini",
+    "provider_used": "Mistral (mistral-medium-3-5)",
     "keys_tried": 1
   }
   ```

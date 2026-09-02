@@ -3,6 +3,7 @@ import { extractCitations } from '@/lib/citation-extractor';
 import { verifyAllCitations } from '@/lib/citation-verifier';
 import { normalizeSections } from '@/lib/section-normalizer';
 import { annotateTextAndReport } from '@/lib/citation-annotator';
+import { keysToTry, poolSize, markRateLimited, markInvalid, markHealthy } from '@/lib/mistral-keys';
 
 const SYSTEM_PROMPT = `You are an expert senior Indian criminal lawyer and principal legal systems architect. Answer the user's legal queries, drafts, and pleadings with maximum professional rigor, legal depth, and completeness.
 
@@ -22,143 +23,88 @@ When drafting or analyzing any legal complaint, application, or pleading:
    - MANU format: MANU/SC/0123/2024
 Use proper legal analysis with headings and structure. Be thorough, detailed, and professional.`;
 
-/**
- * Detects if a 429 error is a per-minute rate limit (retryable after short delay)
- * vs a daily quota exhaustion (not retryable, skip immediately).
- */
-function parseRateLimitError(errorBody: string): { isDailyQuota: boolean; retryAfterMs: number } {
-  try {
-    const parsed = JSON.parse(errorBody);
-    const details = parsed?.error?.details || [];
-    const isDailyQuota = details.some((d: any) =>
-      d.violations?.some((v: any) => v.quotaId?.includes('PerDay'))
-    );
-    const retryInfo = details.find((d: any) => d['@type']?.includes('RetryInfo'));
-    const retryDelay = retryInfo?.retryDelay || '3s';
-    const retryAfterMs = Math.min(parseFloat(retryDelay) * 1000, 5000); // cap at 5s
-    return { isDailyQuota, retryAfterMs };
-  } catch {
-    return { isDailyQuota: false, retryAfterMs: 3000 };
-  }
-}
+const MISTRAL_MODEL = 'mistral-medium-3-5';
 
-async function callGemini(query: string, apiKey: string): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: query }] }],
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      generationConfig: { temperature: 0.3 },
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-
-    // For 429 rate limits: check if it's per-minute (retryable) or daily (skip)
-    if (res.status === 429) {
-      const { isDailyQuota, retryAfterMs } = parseRateLimitError(body);
-      if (!isDailyQuota && retryAfterMs > 0) {
-        console.warn(`  ⏳ Gemini per-minute rate limit hit. Retrying in ${retryAfterMs}ms...`);
-        await new Promise((r) => setTimeout(r, retryAfterMs));
-        const retryRes = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: query }] }],
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            generationConfig: { temperature: 0.3 },
-          }),
-          signal: AbortSignal.timeout(30000),
-        });
-        if (retryRes.ok) {
-          const data = await retryRes.json();
-          const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text) return text;
-        }
-      }
-      throw new Error(`RATE_LIMIT_${isDailyQuota ? 'DAILY' : 'MINUTE'}`);
-    }
-
-    throw new Error(`Gemini API error: ${res.status} ${body.substring(0, 200)}`);
-  }
-
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('Empty response from Gemini');
-  return text;
-}
-
-async function callGroq(query: string, apiKey: string): Promise<string> {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+async function callMistral(query: string, apiKey: string): Promise<string> {
+  const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
+      model: MISTRAL_MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: query },
       ],
       temperature: 0.3,
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(60000),
   });
-  if (!res.ok) throw new Error(`Groq API error: ${res.status} ${await res.text()}`);
+
+  if (!res.ok) {
+    const body = await res.text();
+    const err: any = new Error(
+      `Mistral API error: ${res.status} ${body.substring(0, 200)}`
+    );
+    err.status = res.status;
+    const retryAfter = res.headers.get('retry-after');
+    if (retryAfter) err.retryAfterSec = parseInt(retryAfter, 10);
+    throw err;
+  }
+
   const data = await res.json();
   const text = data?.choices?.[0]?.message?.content;
-  if (!text) throw new Error('Empty response from Groq');
+  if (!text) throw new Error('Empty response from Mistral');
   return text;
 }
 
-async function generateLLMResponse(query: string): Promise<{ text: string; provider: string; keysTried: number }> {
-  const geminiKeys = (process.env.GEMINI_API_KEY || '').split(',').map((k) => k.trim()).filter(Boolean);
-  const groqKeys = (process.env.GROQ_API_KEY || '').split(',').map((k) => k.trim()).filter(Boolean);
+async function generateLLMResponse(
+  query: string
+): Promise<{ text: string; provider: string; keysTried: number }> {
+  const candidates = keysToTry();
   let keysTried = 0;
 
-  console.log(`\n🔑 LLM Key Rotation — ${geminiKeys.length} Gemini key(s), ${groqKeys.length} Groq key(s) available`);
+  if (candidates.length === 0) {
+    throw new Error(
+      'No Mistral API keys configured — set MISTRAL_API_KEY_1..N in .env.local'
+    );
+  }
 
-  // Try all Gemini keys
-  for (let i = 0; i < geminiKeys.length; i++) {
+  console.log(
+    `\n🔑 Mistral key rotation — ${candidates.length}/${poolSize()} key(s) available this request`
+  );
+
+  let lastError = '';
+
+  for (const key of candidates) {
     keysTried++;
     try {
-      console.log(`  → Trying Gemini key ${i + 1}/${geminiKeys.length}...`);
-      const text = await callGemini(query, geminiKeys[i]);
-      console.log(`  ✅ Gemini key ${i + 1} succeeded.`);
-      return { text, provider: 'Gemini', keysTried };
+      console.log(`  → Trying key #${key.index}...`);
+      const text = await callMistral(query, key.value);
+      markHealthy(key.index);
+      console.log(`  ✅ Key #${key.index} succeeded.`);
+      return { text, provider: `Mistral (${MISTRAL_MODEL})`, keysTried };
     } catch (e: any) {
-      const msg = e.message || '';
-      if (msg.includes('RATE_LIMIT_DAILY')) {
-        console.warn(`  ❌ Gemini key ${i + 1}: Daily quota exhausted → rotating to next key`);
-      } else if (msg.includes('RATE_LIMIT_MINUTE')) {
-        console.warn(`  ⚠️ Gemini key ${i + 1}: Per-minute rate limit (retry failed) → rotating to next key`);
+      const status = e?.status;
+      lastError = e?.message || String(e);
+
+      if (status === 429) {
+        markRateLimited(key.index, e.retryAfterSec);
+        console.warn(`  ⏳ Key #${key.index}: rate limited → rotating to next key`);
+      } else if (status === 401 || status === 403) {
+        markInvalid(key.index);
+        console.warn(`  ❌ Key #${key.index}: rejected (${status}) → disabled for this process`);
       } else {
-        console.error(`  ❌ Gemini key ${i + 1}: ${msg.substring(0, 150)}`);
+        console.error(`  ❌ Key #${key.index}: ${lastError.substring(0, 150)}`);
       }
     }
   }
 
-  console.log(`  🔄 All Gemini keys exhausted. Falling back to Groq...`);
-
-  // Fallback: try all Groq keys
-  for (let i = 0; i < groqKeys.length; i++) {
-    keysTried++;
-    try {
-      console.log(`  → Trying Groq key ${i + 1}/${groqKeys.length}...`);
-      const text = await callGroq(query, groqKeys[i]);
-      console.log(`  ✅ Groq key ${i + 1} succeeded.`);
-      return { text, provider: 'Groq (Llama 3.3 70B)', keysTried };
-    } catch (e: any) {
-      console.error(`  ❌ Groq key ${i + 1}: ${(e.message || '').substring(0, 150)}`);
-    }
-  }
-
-  throw new Error('All LLM API keys exhausted — no Gemini or Groq keys could generate a response');
+  throw new Error(
+    `All ${keysTried} Mistral key(s) exhausted — last error: ${lastError.substring(0, 200)}`
+  );
 }
 
 export async function POST(request: NextRequest) {
